@@ -1,6 +1,7 @@
 const pool = require("../config/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 require("dotenv").config();
 
 async function register(req, res) {
@@ -97,6 +98,32 @@ async function login(req, res) {
       { expiresIn: "15m" },
     );
 
+    const refreshToken = jwt.sign(
+      {
+        userId: user.id,
+      },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: "7d" },
+    );
+
+    const refreshTokenHash = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
+
+    await pool.query(
+      `insert into refresh_tokens (user_id, token_hash, expires_at) 
+       values ($1, $2, now() + interval '7 days')`,
+      [user.id, refreshTokenHash],
+    );
+
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
     return res.status(200).json({
       status: 200,
       message: "Login successful",
@@ -115,4 +142,73 @@ async function login(req, res) {
   }
 }
 
-module.exports = { register, login };
+async function refresh(req, res) {
+  try {
+    const refershToken = req.cookies.refreshToken;
+    if (!refershToken) {
+      return res.status(401).json({
+        status: 401,
+        message: "Refresh token is required.",
+      });
+    }
+
+    const decoded = jwt.verify(refershToken, process.env.JWT_REFRESH_SECRET);
+
+    const refreshTokenHash = crypto
+      .createHash("sha256")
+      .update(refershToken)
+      .digest("hex");
+
+    const tokenResult = await pool.query(
+      `select id from refresh_tokens where user_id = $1 and token_hash = $2 and expires_at > now()`,
+      [decoded.userId, refreshTokenHash],
+    );
+
+    if (tokenResult.rows.length === 0) {
+      return res.status(401).json({
+        status: 401,
+        message: "Invalid refresh token!",
+      });
+    }
+
+    const accessToken = jwt.sign(
+      { userId: decoded.userId },
+      process.env.JWT_ACCESS_SECRET,
+      { expiresIn: "15m" },
+    );
+
+    return res.json({ accessToken });
+  } catch (error) {
+    return res.status(401).json({
+      status: 401,
+      message: "Invalid or expired refresh token!",
+    });
+  }
+}
+
+async function logout(req, res) {
+  const refreshToken = req.cookies.refreshToken;
+
+  if (refreshToken) {
+    const tokenHash = crypto
+      .createHash("sha256")
+      .update(refreshToken)
+      .digest("hex");
+
+    await pool.query(`delete from refresh_tokens where token_hash = $1`, [
+      tokenHash,
+    ]);
+  }
+
+  res.clearCookie("refreshToken", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+
+  res.status(200).json({
+    status: 200,
+    message: "Logged out successfully!",
+  });
+}
+module.exports = { register, login, refresh, logout };

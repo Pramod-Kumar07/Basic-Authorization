@@ -4,10 +4,12 @@ const pool = require("./config/db");
 const authRoutes = require("./routes/auth.routes");
 const userRoutes = require("./routes/users.routes");
 const requireAuth = require("./middleware/authMiddleware");
+const cookieParser = require("cookie-parser");
 require("dotenv").config();
 
 const app = express();
 
+app.use(cookieParser());
 app.use(cors());
 app.use(express.json());
 
