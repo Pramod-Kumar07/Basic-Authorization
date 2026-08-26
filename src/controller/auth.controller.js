@@ -58,7 +58,7 @@ async function register(req, res) {
 
 async function login(req, res) {
   try {
-    const { email, password } = req.body;
+    const { email, password, token } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
@@ -67,6 +67,39 @@ async function login(req, res) {
       });
     }
 
+    //Google recaptcha v3 implementation start
+    if (!token) {
+      return res.status(400).json({
+        status: 400,
+        message: "Google recaptcha token is required.",
+      });
+    }
+
+    const response = await fetch(
+      "https://www.google.com/recaptcha/api/siteverify",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          secret: process.env.RECAPTCHA_SECRET_KEY,
+          response: token,
+        }),
+      },
+    );
+
+    const recaptchaRes = await response.json();
+    console.log({ recaptchaRes });
+
+    if (!recaptchaRes.success || recaptchaRes.score < 0.7) {
+      return res.status(400).json({
+        status: 400,
+        message: "Google recaptcha validation failed.",
+      });
+    }
+
+    //Google recaptcha implementation end
     const result = await pool.query("select * from users where email = $1", [
       email.toLowerCase().trim(),
     ]);
